@@ -1,41 +1,60 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 
-export default function LoginPage() {
-  const [email, setEmail]     = useState('')
-  const [sent, setSent]       = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError]     = useState<string | null>(null)
+type Mode = 'magic' | 'password'
 
-  async function handleSubmit(e: React.FormEvent) {
+export default function LoginPage() {
+  const router = useRouter()
+  const [mode, setMode]         = useState<Mode>('magic')
+  const [email, setEmail]       = useState('')
+  const [password, setPassword] = useState('')
+  const [sent, setSent]         = useState(false)
+  const [loading, setLoading]   = useState(false)
+  const [error, setError]       = useState<string | null>(null)
+
+  function switchMode(next: Mode) {
+    setMode(next)
+    setError(null)
+  }
+
+  async function handleMagicLink(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     setError(null)
-
     const supabase = createClient()
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
     })
-
     setLoading(false)
-
     if (error) {
       setError('No se pudo enviar el enlace. Verifica tu correo e intenta de nuevo.')
       return
     }
-
     setSent(true)
+  }
+
+  async function handlePassword(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+    const supabase = createClient()
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    setLoading(false)
+    if (error) {
+      setError('Correo o contraseña incorrectos.')
+      return
+    }
+    router.push('/dashboard')
   }
 
   return (
     <div className="min-h-screen bg-orion-bg flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {/* Logo / Header */}
         <div className="text-center mb-10">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-ev26-purple mb-4">
             <span className="text-2xl">⚽</span>
@@ -54,7 +73,9 @@ export default function LoginPage() {
               </div>
               <h2 className="text-lg font-semibold text-ui-textMain mb-2">Revisa tu correo</h2>
               <p className="text-ui-textMuted text-sm leading-relaxed">
-                Enviamos un enlace de acceso a <span className="text-ui-textMain font-medium">{email}</span>. Haz clic en el enlace para ingresar.
+                Enviamos un enlace de acceso a{' '}
+                <span className="text-ui-textMain font-medium">{email}</span>.
+                Haz clic en el enlace para ingresar.
               </p>
               <button
                 onClick={() => { setSent(false); setEmail('') }}
@@ -65,12 +86,37 @@ export default function LoginPage() {
             </div>
           ) : (
             <>
-              <h2 className="text-lg font-semibold text-ui-textMain mb-1">Ingresar</h2>
-              <p className="text-ui-textMuted text-sm mb-6">
-                Ingresa tu correo corporativo y te enviamos un enlace de acceso.
-              </p>
+              <h2 className="text-lg font-semibold text-ui-textMain mb-4">Ingresar</h2>
 
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="flex rounded-lg bg-orion-bg p-1 mb-6">
+                <button
+                  type="button"
+                  onClick={() => switchMode('magic')}
+                  className={`flex-1 text-sm font-medium py-1.5 rounded-md transition-colors ${
+                    mode === 'magic'
+                      ? 'bg-ev26-purple text-white'
+                      : 'text-ui-textMuted hover:text-ui-textMain'
+                  }`}
+                >
+                  Enlace mágico
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchMode('password')}
+                  className={`flex-1 text-sm font-medium py-1.5 rounded-md transition-colors ${
+                    mode === 'password'
+                      ? 'bg-ev26-purple text-white'
+                      : 'text-ui-textMuted hover:text-ui-textMain'
+                  }`}
+                >
+                  Contraseña
+                </button>
+              </div>
+
+              <form
+                onSubmit={mode === 'magic' ? handleMagicLink : handlePassword}
+                className="space-y-4"
+              >
                 <div>
                   <label htmlFor="email" className="block text-sm font-medium text-ui-textMuted mb-1.5">
                     Correo electrónico
@@ -86,17 +132,47 @@ export default function LoginPage() {
                   />
                 </div>
 
-                {error && (
-                  <p className="text-ui-cta text-sm">{error}</p>
+                {mode === 'password' && (
+                  <div>
+                    <label htmlFor="password" className="block text-sm font-medium text-ui-textMuted mb-1.5">
+                      Contraseña
+                    </label>
+                    <input
+                      id="password"
+                      type="password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-orion-bg border border-white/10 rounded-lg px-4 py-2.5 text-ui-textMain placeholder-ui-textMuted focus:outline-none focus:border-ev26-purple transition-colors text-sm"
+                    />
+                  </div>
                 )}
+
+                {error && <p className="text-ui-cta text-sm">{error}</p>}
 
                 <button
                   type="submit"
-                  disabled={loading || !email}
+                  disabled={loading || !email || (mode === 'password' && !password)}
                   className="w-full bg-ev26-purple hover:bg-ev26-purple/90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded-lg transition-colors text-sm"
                 >
-                  {loading ? 'Enviando...' : 'Enviar enlace de acceso'}
+                  {loading
+                    ? 'Cargando...'
+                    : mode === 'magic'
+                    ? 'Enviar enlace de acceso'
+                    : 'Ingresar'}
                 </button>
+
+                {mode === 'password' && (
+                  <p className="text-center">
+                    <Link
+                      href="/auth/reset-password"
+                      className="text-sm text-ui-textMuted hover:text-ui-textMain transition-colors"
+                    >
+                      ¿Olvidaste tu contraseña?
+                    </Link>
+                  </p>
+                )}
               </form>
             </>
           )}
