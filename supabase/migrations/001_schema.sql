@@ -1,4 +1,30 @@
 -- ============================================================
+-- UUID v7 (timestamp-ordered, no extension required)
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION uuid_generate_v7()
+RETURNS UUID AS $$
+DECLARE
+  v_unix_ms BIGINT;
+  v_bytes   BYTEA;
+  v_hex     TEXT;
+BEGIN
+  v_unix_ms := TRUNC(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT;
+  v_bytes   := decode(lpad(to_hex(v_unix_ms), 12, '0'), 'hex') || gen_random_bytes(10);
+  v_bytes   := set_byte(v_bytes, 6, (get_byte(v_bytes, 6) & 15)  | 112);  -- ver = 7
+  v_bytes   := set_byte(v_bytes, 8, (get_byte(v_bytes, 8) & 63)  | 128);  -- var = 10xx
+  v_hex     := encode(v_bytes, 'hex');
+  RETURN (
+    substring(v_hex,  1, 8) || '-' ||
+    substring(v_hex,  9, 4) || '-' ||
+    substring(v_hex, 13, 4) || '-' ||
+    substring(v_hex, 17, 4) || '-' ||
+    substring(v_hex, 21, 12)
+  )::UUID;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================
 -- ENUMS
 -- ============================================================
 
@@ -14,7 +40,7 @@ CREATE TYPE user_role         AS ENUM ('participant', 'admin');
 -- ============================================================
 
 CREATE TABLE users (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id           UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
   email        TEXT UNIQUE NOT NULL,
   full_name    TEXT NOT NULL,
   avatar_url   TEXT,
@@ -25,7 +51,7 @@ CREATE TABLE users (
 );
 
 CREATE TABLE tournaments (
-  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id                    UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
   name                  TEXT NOT NULL,
   slug                  TEXT UNIQUE NOT NULL,
   entry_fee_gtq         NUMERIC(10,2) NOT NULL DEFAULT 100.00,
@@ -38,7 +64,7 @@ CREATE TABLE tournaments (
 );
 
 CREATE TABLE enrollments (
-  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id                   UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
   user_id              UUID NOT NULL REFERENCES users(id),
   tournament_id        UUID NOT NULL REFERENCES tournaments(id),
   payment_status       payment_status NOT NULL DEFAULT 'pending',
@@ -50,7 +76,7 @@ CREATE TABLE enrollments (
 );
 
 CREATE TABLE teams (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id           UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
   name         TEXT NOT NULL,
   code         CHAR(3) UNIQUE NOT NULL,
   group_letter CHAR(1),
@@ -59,7 +85,7 @@ CREATE TABLE teams (
 );
 
 CREATE TABLE phases (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id               UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
   name_en          TEXT NOT NULL,
   name_es          TEXT NOT NULL,
   slug             TEXT UNIQUE NOT NULL,
@@ -71,7 +97,7 @@ CREATE TABLE phases (
 );
 
 CREATE TABLE matches (
-  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id                    UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
   external_id           TEXT UNIQUE,
   phase_id              UUID NOT NULL REFERENCES phases(id),
   home_team_id          UUID REFERENCES teams(id),
@@ -79,7 +105,7 @@ CREATE TABLE matches (
   home_team_placeholder TEXT,
   away_team_placeholder TEXT,
   kickoff_at            TIMESTAMPTZ NOT NULL,
-  prediction_cutoff_at  TIMESTAMPTZ GENERATED ALWAYS AS (kickoff_at - INTERVAL '30 minutes') STORED,
+  prediction_cutoff_at  TIMESTAMPTZ,
   home_score_result     INT,
   away_score_result     INT,
   home_score_pen        INT,
@@ -91,7 +117,7 @@ CREATE TABLE matches (
 );
 
 CREATE TABLE predictions (
-  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id         UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
   user_id    UUID NOT NULL REFERENCES users(id),
   match_id   UUID NOT NULL REFERENCES matches(id),
   home_score INT NOT NULL CHECK (home_score >= 0 AND home_score <= 99),
@@ -102,7 +128,7 @@ CREATE TABLE predictions (
 );
 
 CREATE TABLE bonus_predictions (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
   user_id         UUID NOT NULL REFERENCES users(id),
   tournament_id   UUID NOT NULL REFERENCES tournaments(id),
   prediction_type bonus_type NOT NULL,
@@ -112,7 +138,7 @@ CREATE TABLE bonus_predictions (
 );
 
 CREATE TABLE match_scores (
-  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id             UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
   user_id        UUID NOT NULL REFERENCES users(id),
   match_id       UUID NOT NULL REFERENCES matches(id),
   correct_winner BOOLEAN NOT NULL DEFAULT false,
@@ -126,7 +152,7 @@ CREATE TABLE match_scores (
 );
 
 CREATE TABLE leaderboard (
-  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id                    UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
   user_id               UUID NOT NULL REFERENCES users(id),
   tournament_id         UUID NOT NULL REFERENCES tournaments(id),
   match_points          NUMERIC(8,1) NOT NULL DEFAULT 0,
@@ -143,7 +169,7 @@ CREATE TABLE leaderboard (
 );
 
 CREATE TABLE notifications (
-  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id         UUID PRIMARY KEY DEFAULT uuid_generate_v7(),
   user_id    UUID REFERENCES users(id),
   channel    TEXT NOT NULL,
   event_type TEXT NOT NULL,
@@ -471,6 +497,22 @@ BEGIN
   WHERE lb.id = r.id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================================
+-- PREDICTION CUTOFF TRIGGER
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION set_prediction_cutoff()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.prediction_cutoff_at := NEW.kickoff_at - INTERVAL '30 minutes';
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER matches_set_cutoff
+  BEFORE INSERT OR UPDATE OF kickoff_at ON matches
+  FOR EACH ROW EXECUTE FUNCTION set_prediction_cutoff();
 
 -- ============================================================
 -- AUTH TRIGGER
