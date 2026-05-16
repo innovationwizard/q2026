@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { Logo } from '@/components/logo'
 
 type Mode = 'magic' | 'password'
 
@@ -57,7 +58,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-10">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-ev26-purple mb-4">
-            <span className="text-2xl">⚽</span>
+            <Logo size={30} />
           </div>
           <h1 className="text-2xl font-bold text-ui-textMain">Quiniela</h1>
           <p className="text-ui-textMuted mt-1 text-sm">Evento 2026</p>
